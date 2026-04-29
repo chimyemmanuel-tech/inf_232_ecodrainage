@@ -149,7 +149,7 @@ elif menu == "EC2 Analytics Engine":
             
             with col_a:
                 st.subheader("Unsupervised: K-Means")
-                kmeans = KMeans(n_components=3, n_init=10).fit(df_ml[['lat', 'lon']])
+               kmeans = KMeans(n_clusters=n_clusters, n_init=10, random_state=42).fit(df_ml[['lat', 'lon']])
                 df['Cluster'] = kmeans.labels_
                 st.plotly_chart(px.scatter(df, x='lon', y='lat', color='Cluster', title="Waste Hotspots"))
             
