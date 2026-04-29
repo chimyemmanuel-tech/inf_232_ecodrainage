@@ -87,15 +87,15 @@ elif menu == "Field Data Collection":
             risk = st.select_slider("Immediate Blockage Risk", options=["Low", "Medium", "High"])
             
         submitted = st.form_submit_button("Submit to Cloud")
-       if submitted:
-            try:
-                payload = {"plastic_type": p_type, "volume": vol, "hub_type": hub, "lat": lat, "lon": lon, "risk_level": risk}
-                supabase.table("drainage_waste").insert(payload).execute()
-                st.success("Data synchronized successfully.")
-                st.balloons()
-                st.rerun()
-            except Exception as e:
-                st.error(f"Connection lost. Please try submitting again. Error: {e}")
+    if submitted:
+        try:
+            payload = {"plastic_type": p_type, "volume": vol, "hub_type": hub, "lat": lat, "lon": lon, "risk_level": risk}
+            supabase.table("drainage_waste").insert(payload).execute()
+            st.success("Data synchronized successfully.")
+            st.balloons()
+            st.rerun()
+        except Exception as e:
+            st.error(f"Connection lost. Please try submitting again. Error: {e}")
 
 # --- PAGE 3: EC2 ANALYTICS ENGINE ---
 elif menu == "EC2 Analytics Engine":
