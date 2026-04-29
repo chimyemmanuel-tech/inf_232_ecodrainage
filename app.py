@@ -96,16 +96,21 @@ elif menu == "Field Data Collection":
 elif menu == "EC2 Analytics Engine":
     st.title("📊 Advanced Statistical Modeling (EC2)")
     
-    if len(df) < 8:
-        st.warning("Insufficient data. Please add at least 8 entries in 'Field Data Collection' to run models.")
+    # OPTIMIZATION: Create a clean dataset specifically for ML models
+    # This removes any rows with missing values that cause crashes
+    df_ml_clean = df.dropna(subset=['volume', 'lat', 'lon', 'plastic_type', 'hub_type', 'risk_level'])
+    
+    if len(df_ml_clean) < 8:
+        st.warning(f"Insufficient data. You have {len(df_ml_clean)} valid entries, but need at least 8 to run models.")
+        st.info("Please add more reports in 'Field Data Collection'.")
     else:
         # Pre-processing
         le = LabelEncoder()
-        df_ml = df.copy()
+        df_ml = df_ml_clean.copy()
         for col in ['plastic_type', 'hub_type', 'risk_level']:
             df_ml[f'{col}_enc'] = le.fit_transform(df_ml[col])
 
-        tabs = st.tabs(["1 & 2: Linear Regression", "3: Dimensionality (PCA)", "4 & 5: Classification"])
+        tabs = st.tabs(["1 & 2: Regression", "3: PCA", "4 & 5: Classification"])
 
         with tabs[0]:
             st.header("Linear Regression Analysis")
@@ -116,15 +121,14 @@ elif menu == "EC2 Analytics Engine":
             st.metric("Multiple Regression R²", f"{r2_score(y, model_m.predict(X_multi)):.4f}")
 
         with tabs[1]:
-            st.header("Techniques de réduction (PCA)")
+            st.header("Dimensionality Reduction (PCA)")
             features = ['volume', 'lat', 'lon', 'plastic_type_enc', 'hub_type_enc']
-            scaler = StandardScaler()
-            x_scaled = scaler.fit_transform(df_ml[features])
+            x_scaled = StandardScaler().fit_transform(df_ml[features])
             
             pca = PCA(n_components=2)
             pc = pca.fit_transform(x_scaled)
             pca_df = pd.DataFrame(pc, columns=['PC1', 'PC2'])
-            fig_pca = px.scatter(pca_df, x='PC1', y='PC2', color=df['plastic_type'], title="PCA Variance Mapping")
+            fig_pca = px.scatter(pca_df, x='PC1', y='PC2', color=df_ml['plastic_type'], title="PCA Variance Mapping")
             st.plotly_chart(fig_pca, use_container_width=True)
 
         with tabs[2]:
@@ -133,20 +137,15 @@ elif menu == "EC2 Analytics Engine":
             
             with col_a:
                 st.subheader("Unsupervised: K-Means")
-                # Error prevention: Using lat/lon for clustering
-                X_km = df_ml[['lat', 'lon']]
-                kmeans = KMeans(n_components=3, n_init=10, random_state=42).fit(X_km)
+                # ERROR FIX: Dynamically set clusters based on data size to prevent TypeError
+                n_clusters = min(3, len(df_ml))
+                kmeans = KMeans(n_components=n_clusters, n_init=10, random_state=42).fit(df_ml[['lat', 'lon']])
                 df_ml['Cluster'] = kmeans.labels_
                 st.plotly_chart(px.scatter(df_ml, x='lon', y='lat', color='Cluster', title="Waste Hotspots"))
             
             with col_b:
                 st.subheader("Supervised: Random Forest")
                 X_rf = df_ml[['volume', 'plastic_type_enc', 'hub_type_enc']]
-                y_rf = df['risk_level']
+                y_rf = df_ml['risk_level']
                 rf = RandomForestClassifier(random_state=42).fit(X_rf, y_rf)
                 st.success("Random Forest model trained successfully.")
-
-elif menu == "Documentation":
-    st.title("📖 Project Documentation")
-    st.write("### Technical Specification:")
-    st.markdown("- **Backend:** Supabase (PostgreSQL)\n- **Frontend:** Streamlit\n- **Models:** Scikit-Learn\n- **Requirement:** INF 232 EC2")
