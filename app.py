@@ -14,12 +14,10 @@ from sklearn.metrics import r2_score
 # --- CONFIGURATION & UI THEME ---
 st.set_page_config(page_title="EcoDrain Analytics v2.0", layout="wide", page_icon="🌊")
 
-# Professional Styling
 st.markdown("""
     <style>
     .main { background-color: #f8f9fa; }
     .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #007bff; color: white; }
-    .reportview-container .main .block-container { padding-top: 2rem; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -37,7 +35,11 @@ supabase = init_connection()
 def fetch_data():
     try:
         res = supabase.table("drainage_waste").select("*").execute()
-        return pd.DataFrame(res.data)
+        raw_df = pd.DataFrame(res.data)
+        if not raw_df.empty:
+            # CLEANING: Drop any rows missing critical ML features
+            raw_df = raw_df.dropna(subset=['lat', 'lon', 'volume', 'plastic_type', 'hub_type', 'risk_level'])
+        return raw_df
     except:
         return pd.DataFrame()
 
@@ -54,14 +56,12 @@ if menu == "Live Dashboard":
     st.title("📍 Infrastructure Monitoring Dashboard")
     
     if not df.empty:
-        # KPI Row
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total Observations", len(df))
         c2.metric("Waste Volume (L)", f"{df['volume'].sum():,.0f}")
         c3.metric("Critical Points", len(df[df['volume'] > 50]))
         c4.metric("System Health", "Active", delta="Stable")
 
-        # Geospatial Map
         st.subheader("Geospatial Distribution of Drainage Blockages")
         fig_map = px.scatter_mapbox(df, lat="lat", lon="lon", color="plastic_type", size="volume",
                                     hover_name="hub_type", zoom=12, mapbox_style="carto-positron",
@@ -73,8 +73,6 @@ if menu == "Live Dashboard":
 # --- PAGE 2: DATA COLLECTION ---
 elif menu == "Field Data Collection":
     st.title("📥 Field Data Entry")
-    st.markdown("Use this form to log plastic accumulation in the urban drainage network.")
-    
     with st.form("entry_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
@@ -90,52 +88,42 @@ elif menu == "Field Data Collection":
         if submitted:
             payload = {"plastic_type": p_type, "volume": vol, "hub_type": hub, "lat": lat, "lon": lon, "risk_level": risk}
             supabase.table("drainage_waste").insert(payload).execute()
-            st.success("Data synchronized successfully with Supabase SQL.")
+            st.success("Data synchronized successfully.")
             st.balloons()
+            st.rerun()
 
 # --- PAGE 3: EC2 ANALYTICS ENGINE ---
 elif menu == "EC2 Analytics Engine":
     st.title("📊 Advanced Statistical Modeling (EC2)")
     
     if len(df) < 8:
-        st.warning("Insufficient data. Minimum 8 entries required to run valid statistical models.")
+        st.warning("Insufficient data. Please add at least 8 entries in 'Field Data Collection' to run models.")
     else:
-        # Pre-processing for ML
+        # Pre-processing
         le = LabelEncoder()
         df_ml = df.copy()
-        df_ml['type_enc'] = le.fit_transform(df['plastic_type'])
-        df_ml['hub_enc'] = le.fit_transform(df['hub_type'])
-        df_ml['risk_enc'] = le.fit_transform(df['risk_level'])
+        for col in ['plastic_type', 'hub_type', 'risk_level']:
+            df_ml[f'{col}_enc'] = le.fit_transform(df_ml[col])
 
         tabs = st.tabs(["1 & 2: Linear Regression", "3: Dimensionality (PCA)", "4 & 5: Classification"])
 
         with tabs[0]:
             st.header("Linear Regression Analysis")
-            st.write("Modeling the relationship between Waste Volume and Location/Source.")
-            
-            # Simple Regression
-            X_simple = df_ml[['lat']]
+            X_multi = df_ml[['plastic_type_enc', 'hub_type_enc', 'lat', 'lon']]
             y = df_ml['volume']
-            model_s = LinearRegression().fit(X_simple, y)
-            
-            # Multiple Regression
-            X_multi = df_ml[['type_enc', 'hub_enc', 'lat', 'lon']]
             model_m = LinearRegression().fit(X_multi, y)
-            
             st.latex(r"V = \beta_0 + \beta_1(Type) + \beta_2(Hub) + \epsilon")
             st.metric("Multiple Regression R²", f"{r2_score(y, model_m.predict(X_multi)):.4f}")
 
         with tabs[1]:
             st.header("Techniques de réduction (PCA)")
-            st.write("Reducing multidimensional field data into Principal Components.")
-            features = ['volume', 'lat', 'lon', 'type_enc', 'hub_enc']
+            features = ['volume', 'lat', 'lon', 'plastic_type_enc', 'hub_type_enc']
             scaler = StandardScaler()
             x_scaled = scaler.fit_transform(df_ml[features])
             
             pca = PCA(n_components=2)
             pc = pca.fit_transform(x_scaled)
             pca_df = pd.DataFrame(pc, columns=['PC1', 'PC2'])
-            
             fig_pca = px.scatter(pca_df, x='PC1', y='PC2', color=df['plastic_type'], title="PCA Variance Mapping")
             st.plotly_chart(fig_pca, use_container_width=True)
 
@@ -145,25 +133,20 @@ elif menu == "EC2 Analytics Engine":
             
             with col_a:
                 st.subheader("Unsupervised: K-Means")
-                kmeans = KMeans(n_components=3, n_init=10).fit(df_ml[['lat', 'lon']])
-                df['Cluster'] = kmeans.labels_
-                st.plotly_chart(px.scatter(df, x='lon', y='lat', color='Cluster', title="Waste Hotspots"))
+                # Error prevention: Using lat/lon for clustering
+                X_km = df_ml[['lat', 'lon']]
+                kmeans = KMeans(n_components=3, n_init=10, random_state=42).fit(X_km)
+                df_ml['Cluster'] = kmeans.labels_
+                st.plotly_chart(px.scatter(df_ml, x='lon', y='lat', color='Cluster', title="Waste Hotspots"))
             
             with col_b:
                 st.subheader("Supervised: Random Forest")
-                # Predict Risk Level based on Volume and Type
-                X_cls = df_ml[['volume', 'type_enc', 'hub_enc']]
-                y_cls = df_ml['risk_level']
-                rf = RandomForestClassifier().fit(X_cls, y_cls)
-                st.success("Model trained to predict Blockage Risk.")
+                X_rf = df_ml[['volume', 'plastic_type_enc', 'hub_type_enc']]
+                y_rf = df['risk_level']
+                rf = RandomForestClassifier(random_state=42).fit(X_rf, y_rf)
+                st.success("Random Forest model trained successfully.")
 
 elif menu == "Documentation":
     st.title("📖 Project Documentation")
-    st.info("Project: INF 232 EC2 - Analysis and Collection of Urban Infrastructure Data")
-    st.write("""
-    ### Technical Specification:
-    - **Backend:** Supabase (PostgreSQL)
-    - **Frontend:** Streamlit Framework
-    - **Models:** Scikit-Learn (PCA, KMeans, LinearRegression)
-    - **Visualization:** Plotly Geospatial Engine
-    """)
+    st.write("### Technical Specification:")
+    st.markdown("- **Backend:** Supabase (PostgreSQL)\n- **Frontend:** Streamlit\n- **Models:** Scikit-Learn\n- **Requirement:** INF 232 EC2")
